@@ -1,0 +1,808 @@
+import { useState, useEffect } from "react";
+
+const DEPARTMENTS = ["Finance","Marketing","School Services","Maintenance","Front Desk","Human Resources","Admissions","Security","Coordinators","Teachers","Other"];
+const USERS = ["Natasha","Academic Coordinator","Wellbeing Coordinator","Preschool Coordinator"];
+const STATUSES = ["Not started","In progress","On hold","Completed"];
+const STATUS_COLORS = {
+  "Not started":{ bg:"#F2F2F0", text:"#5F5E5A", border:"#C7C6C2" },
+  "In progress": { bg:"#EAF3DE", text:"#3B6D11", border:"#639922" },
+  "On hold":     { bg:"#FAEEDA", text:"#854F0B", border:"#BA7517" },
+  "Completed":   { bg:"#EEEDFE", text:"#3C3489", border:"#7F77DD" },
+};
+const MAT_STATUSES = ["To Do","In Progress","Done"];
+const MAT_COLORS = {
+  "To Do":       { bg:"#F2F2F0", text:"#5F5E5A", border:"#C7C6C2" },
+  "In Progress": { bg:"#E6F1FB", text:"#0C447C", border:"#378ADD" },
+  "Done":        { bg:"#EAF3DE", text:"#3B6D11", border:"#639922" },
+};
+const LEVELS = ["Early Years","Preschool","Elementary"];
+const FIXED_MAINTENANCE = ["Sound system & AV setup","Microphones & stands","Lighting","Stage / risers","Chair setup & distribution","Tables","Cleaning before event","Cleaning after event","Trash & waste management","Security / access control","Signage & banners","Electrical / extension cords"];
+const DEFAULT_SPACES = ["Venue","Stage","Chairs distribution","Decoration","AV / Sound","Entrance & reception"];
+const MILESTONE_TYPES = ["Parent communication","Rehearsal","Materials deadline","Setup day","Dry run","Other"];
+const FEEDBACK_PROMPTS = [
+  "Overall, how did the event go?",
+  "What worked well?",
+  "What needs to be improved next time?",
+  "Logistics & spaces — any issues?",
+  "Team & coordination — feedback?",
+  "Parent / community response?",
+  "Budget & materials — on track?",
+  "Recommendations for next edition:",
+];
+
+const EVENTS = [
+  { id:1, title:"Music & Arts Festival",                  date:"2026-05-28", color:"#D4537E" },
+  { id:2, title:"Teachers' Day",                          date:"2026-05-15", color:"#378ADD" },
+  { id:3, title:"Fathers' Day",                           date:"2026-06-19", color:"#1D9E75" },
+  { id:4, title:"Kinder Graduation Ceremony",             date:"2026-06-26", color:"#639922" },
+  { id:5, title:"5th Grade Graduation Ceremony",          date:"2026-06-26", color:"#BA7517" },
+  { id:6, title:"End of the Year Ceremony",               date:"2026-07-03", color:"#7F77DD" },
+  { id:7, title:"Parents Association Recognition Dinner", date:"2026-07-10", color:"#D85A30" },
+];
+
+function emptyAssignee() { return { responsible:"", customName:"", dueDate:"", status:"To Do" }; }
+
+function makeEvent(ev) {
+  return {
+    ...ev, status:"Not started",
+    levels:{ "Early Years":{ active:false, responsible:"", notes:"" }, "Preschool":{ active:false, responsible:"", notes:"" }, "Elementary":{ active:false, responsible:"", notes:"" } },
+    team:{ mainResponsible:"Natasha", coordinators:[] },
+    logistics:{
+      spaces: DEFAULT_SPACES.map((name,i)=>({ id:i+1, name, description:"", assignee:emptyAssignee() })),
+      maintenance: FIXED_MAINTENANCE.map((name,i)=>({ id:i+1, name, fixed:true, done:false, assignee:emptyAssignee() })),
+      cafeteria:{ needed:false, notes:"", assignee:emptyAssignee() },
+      parking:{ needed:false, notes:"", assignee:emptyAssignee() },
+      externalSports:{ needed:false, notes:"", assignee:emptyAssignee() },
+      comments:"",
+    },
+    materials:[],
+    milestones:[],
+    debrief:{
+      locked: false,
+      completedDate: "",
+      attendance: "",
+      rating: 0,
+      entries: FEEDBACK_PROMPTS.map((prompt,i)=>({ id:i+1, prompt, response:"" })),
+      additionalNotes: "",
+      author: "",
+      authorDate: "",
+    },
+  };
+}
+
+function fmt(d) {
+  if (!d) return "—";
+  const [y,m,day] = d.split("-");
+  const mo=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${mo[+m-1]} ${+day}`;
+}
+function fmtFull(d) {
+  if (!d) return "—";
+  const [y,m,day] = d.split("-");
+  const mo=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${mo[+m-1]} ${+day}, ${y}`;
+}
+function daysLeft(d) {
+  if (!d) return null;
+  return Math.ceil((new Date(d)-new Date())/86400000);
+}
+function pct(done,total){ return total?Math.round(done/total*100):0; }
+
+// ── Assignee widget ──────────────────────────────────────────────────────────
+function AssigneeWidget({ value, onChange, canEdit, compact=false }) {
+  const [open, setOpen] = useState(false);
+  const display = value.customName || value.responsible;
+  const sc = MAT_COLORS[value.status]||MAT_COLORS["To Do"];
+
+  if (!canEdit) {
+    if (!display) return null;
+    return (
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <span style={{fontSize:11,padding:"1px 7px",borderRadius:99,background:"var(--color-background-secondary)",color:"var(--color-text-secondary)",border:"0.5px solid var(--color-border-tertiary)"}}>{display}</span>
+        {value.dueDate&&<span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{fmt(value.dueDate)}</span>}
+        <span style={{fontSize:11,padding:"1px 7px",borderRadius:99,background:sc.bg,color:sc.text,border:`0.5px solid ${sc.border}`}}>{value.status}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{fontSize:11,padding:"2px 8px",borderRadius:99,border:"0.5px solid var(--color-border-secondary)",background:display?"var(--color-background-info)":"var(--color-background-secondary)",color:display?"var(--color-text-info)":"var(--color-text-tertiary)",cursor:"pointer",whiteSpace:"nowrap"}}>
+        {display ? `${display}${value.dueDate?" · "+fmt(value.dueDate):""}` : "+ assign"}
+      </button>
+      {open && (
+        <div style={{position:"absolute",zIndex:100,top:"calc(100% + 4px)",left:0,background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"10px",minWidth:220,boxShadow:"0 4px 16px rgba(0,0,0,0.12)"}}>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:4}}>Department / Role</div>
+          <select value={value.responsible} onChange={e=>onChange({...value,responsible:e.target.value,customName:""})} style={{fontSize:12,width:"100%",marginBottom:6,padding:"4px 6px"}}>
+            <option value="">— select —</option>
+            {DEPARTMENTS.map(d=><option key={d}>{d}</option>)}
+          </select>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:4}}>or custom name</div>
+          <input value={value.customName} onChange={e=>onChange({...value,customName:e.target.value,responsible:""})} placeholder="Type a name…" style={{fontSize:12,width:"100%",marginBottom:6,padding:"4px 6px",boxSizing:"border-box"}}/>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:4}}>Due date</div>
+          <input type="date" value={value.dueDate} onChange={e=>onChange({...value,dueDate:e.target.value})} style={{fontSize:12,width:"100%",marginBottom:6,padding:"4px 6px",boxSizing:"border-box"}}/>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:4}}>Status</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+            {MAT_STATUSES.map(s=>{const c=MAT_COLORS[s];return(
+              <button key={s} onClick={()=>onChange({...value,status:s})} style={{fontSize:11,padding:"2px 8px",borderRadius:99,border:`0.5px solid ${c.border}`,background:value.status===s?c.bg:"transparent",color:c.text,cursor:"pointer"}}>{s}</button>
+            );})}
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <button onClick={()=>onChange(emptyAssignee())} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>Clear</button>
+            <button onClick={()=>setOpen(false)} style={{fontSize:11,padding:"3px 10px",cursor:"pointer",background:"var(--color-background-info)",color:"var(--color-text-info)",border:"0.5px solid var(--color-border-info)",borderRadius:"var(--border-radius-md)"}}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── App ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [events, setEvents] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [activeTab, setActiveTab] = useState("levels");
+  const [currentUser, setCurrentUser] = useState("Natasha");
+  const canEdit = USERS.includes(currentUser);
+
+  useEffect(()=>{
+    (async()=>{
+      try { const r=await window.storage.get("mnv-v4"); if(r?.value){setEvents(JSON.parse(r.value));return;} } catch(e){}
+      setEvents(EVENTS.map(makeEvent));
+    })();
+  },[]);
+
+  async function save(data) {
+    setEvents(data);
+    if (selected) setSelected(data.find(e=>e.id===selected.id)||null);
+    try { await window.storage.set("mnv-v4",JSON.stringify(data)); } catch(e){}
+  }
+
+  function updateEvent(updated) {
+    save(events.map(e=>e.id===updated.id?updated:e));
+    setSelected(updated);
+  }
+
+  if (!events) return <div style={{padding:"2rem",fontSize:13,color:"var(--color-text-secondary)"}}>Loading…</div>;
+
+  const upcoming = events.flatMap(ev=>ev.milestones.map(m=>({...m,evTitle:ev.title,evColor:ev.color}))).filter(m=>{const d=daysLeft(m.date);return d!==null&&d>=0&&d<=21;}).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,8);
+
+  return (
+    <div style={{fontFamily:"var(--font-sans)",fontSize:13,minHeight:500}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0.875rem 1.25rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:600,color:"var(--color-text-primary)"}}>Montenova International School</div>
+          <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>Event Planning Dashboard · {new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"})}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:12,color:"var(--color-text-secondary)"}}>Viewing as:</span>
+          <select value={currentUser} onChange={e=>setCurrentUser(e.target.value)} style={{fontSize:12,padding:"4px 8px",borderRadius:"var(--border-radius-md)"}}>
+            {[...USERS,...DEPARTMENTS].map(u=><option key={u}>{u}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead>
+            <tr style={{background:"var(--color-background-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+              {["Event","Date","Days","Status","Levels","Responsible","Materials",""].map((h,i)=>(
+                <th key={i} style={{padding:"8px 12px",textAlign:"left",fontWeight:500,color:"var(--color-text-secondary)",whiteSpace:"nowrap",fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {events.map(ev=>{
+              const dl=daysLeft(ev.date);
+              const sc=STATUS_COLORS[ev.status];
+              const activeLevels=LEVELS.filter(l=>ev.levels[l].active);
+              const matDone=ev.materials.filter(m=>m.status==="Done").length;
+              const matTotal=ev.materials.length;
+              const isSel=selected?.id===ev.id;
+              return (
+                <tr key={ev.id} onClick={()=>{setSelected(isSel?null:ev);setActiveTab("levels");}} style={{borderBottom:"0.5px solid var(--color-border-tertiary)",cursor:"pointer",background:isSel?"var(--color-background-info)":"var(--color-background-primary)"}}>
+                  <td style={{padding:"10px 12px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:3,height:28,borderRadius:2,background:ev.color,flexShrink:0}}/>
+                      <span style={{fontWeight:500,color:"var(--color-text-primary)"}}>{ev.title}</span>
+                    </div>
+                  </td>
+                  <td style={{padding:"10px 12px",color:"var(--color-text-secondary)",whiteSpace:"nowrap"}}>{fmtFull(ev.date)}</td>
+                  <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>
+                    {dl!==null&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:99,background:dl<=14&&ev.status!=="Completed"?"#FAEEDA":"var(--color-background-secondary)",color:dl<=14&&ev.status!=="Completed"?"#854F0B":"var(--color-text-secondary)",fontWeight:dl<=14?500:400}}>{dl===0?"Today":dl<0?`${Math.abs(dl)}d ago`:`${dl}d`}</span>}
+                  </td>
+                  <td style={{padding:"10px 12px"}}>
+                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:sc.bg,color:sc.text,border:`0.5px solid ${sc.border}`,whiteSpace:"nowrap"}}>{ev.status}</span>
+                  </td>
+                  <td style={{padding:"10px 12px"}}>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      {activeLevels.length===0?<span style={{color:"var(--color-text-tertiary)"}}>—</span>:activeLevels.map(l=><span key={l} style={{fontSize:10,padding:"1px 6px",borderRadius:99,background:ev.color+"22",color:ev.color,border:`0.5px solid ${ev.color}55`,whiteSpace:"nowrap"}}>{l==="Early Years"?"EY":l.split(" ")[0]}</span>)}
+                    </div>
+                  </td>
+                  <td style={{padding:"10px 12px",color:"var(--color-text-secondary)",whiteSpace:"nowrap"}}>{ev.team.mainResponsible}</td>
+                  <td style={{padding:"10px 12px"}}>
+                    {matTotal>0?(
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{width:48,height:4,background:"var(--color-border-tertiary)",borderRadius:2,overflow:"hidden"}}>
+                          <div style={{width:`${pct(matDone,matTotal)}%`,height:"100%",background:ev.color,borderRadius:2}}/>
+                        </div>
+                        <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{matDone}/{matTotal}</span>
+                      </div>
+                    ):<span style={{color:"var(--color-text-tertiary)"}}>—</span>}
+                  </td>
+                  <td style={{padding:"10px 12px",textAlign:"right"}}><span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{isSel?"▲":"▼"}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Milestones strip */}
+      {upcoming.length>0&&(
+        <div style={{padding:"0.75rem 1.25rem",borderTop:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)"}}>
+          <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Upcoming milestones — next 21 days</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {upcoming.map((m,i)=>(
+              <div key={i} style={{fontSize:11,padding:"3px 10px",borderRadius:99,background:"var(--color-background-primary)",border:`0.5px solid ${m.evColor}55`,color:"var(--color-text-secondary)"}}>
+                <span style={{color:m.evColor,fontWeight:500}}>{m.evTitle.split(" ")[0]}</span> · {m.type} · {fmtFull(m.date)}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Drawer */}
+      {selected&&<DetailDrawer event={selected} onUpdate={updateEvent} canEdit={canEdit} activeTab={activeTab} setActiveTab={setActiveTab} onClose={()=>setSelected(null)} currentUser={currentUser}/>}
+    </div>
+  );
+}
+
+// ── Detail Drawer ─────────────────────────────────────────────────────────────
+function DetailDrawer({event:ev,onUpdate,canEdit,activeTab,setActiveTab,onClose,currentUser}){
+  const TABS=[["levels","Levels"],["team","Team"],["logistics","Logistics"],["materials","Materials"],["milestones","Milestones"],["debrief","Debrief"]];
+  return (
+    <div style={{borderTop:"1.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0.75rem 1.25rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:4,height:32,borderRadius:2,background:ev.color}}/>
+          <div>
+            <div style={{fontSize:14,fontWeight:600,color:"var(--color-text-primary)"}}>{ev.title}</div>
+            <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{fmtFull(ev.date)} · {daysLeft(ev.date)>=0?`${daysLeft(ev.date)} days away`:"Past event"}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {canEdit&&(
+            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {STATUSES.map(s=>{const sc=STATUS_COLORS[s];return(
+                <button key={s} onClick={()=>onUpdate({...ev,status:s})} style={{fontSize:11,padding:"3px 8px",borderRadius:99,border:`0.5px solid ${sc.border}`,background:ev.status===s?sc.bg:"transparent",color:sc.text,cursor:"pointer",fontWeight:ev.status===s?500:400}}>{s}</button>
+              );})}
+            </div>
+          )}
+          <button onClick={onClose} style={{fontSize:16,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>×</button>
+        </div>
+      </div>
+      <div style={{display:"flex",borderBottom:"0.5px solid var(--color-border-tertiary)",padding:"0 1.25rem",background:"var(--color-background-secondary)"}}>
+        {TABS.map(([t,l])=>(
+          <button key={t} onClick={()=>setActiveTab(t)} style={{fontSize:12,padding:"8px 14px",border:"none",borderBottom:activeTab===t?"2px solid var(--color-border-info)":"2px solid transparent",background:"transparent",color:activeTab===t?"var(--color-text-info)":"var(--color-text-secondary)",cursor:"pointer",fontWeight:activeTab===t?500:400,whiteSpace:"nowrap"}}>{l}</button>
+        ))}
+      </div>
+      <div style={{padding:"1rem 1.25rem",maxHeight:400,overflowY:"auto"}}>
+        {activeTab==="levels"    &&<LevelsTab ev={ev} onUpdate={onUpdate} canEdit={canEdit}/>}
+        {activeTab==="team"      &&<TeamTab ev={ev} onUpdate={onUpdate} canEdit={canEdit}/>}
+        {activeTab==="logistics" &&<LogisticsTab ev={ev} onUpdate={onUpdate} canEdit={canEdit}/>}
+        {activeTab==="materials" &&<MaterialsTab ev={ev} onUpdate={onUpdate} canEdit={canEdit} currentUser={currentUser}/>}
+        {activeTab==="milestones"&&<MilestonesTab ev={ev} onUpdate={onUpdate} canEdit={canEdit}/>}
+        {activeTab==="debrief"   &&<DebriefTab ev={ev} onUpdate={onUpdate} currentUser={currentUser}/>}
+      </div>
+    </div>
+  );
+}
+
+// ── Levels Tab ────────────────────────────────────────────────────────────────
+function LevelsTab({ev,onUpdate,canEdit}){
+  function setLevel(level,key,val){const clone=JSON.parse(JSON.stringify(ev));clone.levels[level][key]=val;onUpdate(clone);}
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+      {LEVELS.map(l=>{
+        const d=ev.levels[l];
+        const ac=l==="Early Years"?"#BA7517":l==="Preschool"?"#D85A30":"#378ADD";
+        return (
+          <div key={l} style={{border:`0.5px solid ${d.active?ac:"var(--color-border-tertiary)"}`,borderRadius:"var(--border-radius-lg)",padding:"0.875rem",background:d.active?ac+"11":"var(--color-background-secondary)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <input type="checkbox" checked={d.active} disabled={!canEdit} onChange={e=>setLevel(l,"active",e.target.checked)}/>
+              <span style={{fontWeight:500,color:d.active?ac:"var(--color-text-secondary)",fontSize:13}}>{l}</span>
+            </div>
+            <div style={{marginBottom:8}}>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Responsible</div>
+              {canEdit?(
+                <select value={d.responsible} onChange={e=>setLevel(l,"responsible",e.target.value)} style={{fontSize:12,width:"100%",padding:"4px 6px"}}>
+                  <option value="">— assign —</option>
+                  {USERS.map(u=><option key={u}>{u}</option>)}
+                </select>
+              ):<div style={{fontSize:12}}>{d.responsible||"—"}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Notes</div>
+              {canEdit?(
+                <textarea value={d.notes} onChange={e=>setLevel(l,"notes",e.target.value)} rows={3} placeholder="Notes…" style={{fontSize:12,width:"100%",resize:"vertical",padding:"5px 7px",boxSizing:"border-box"}}/>
+              ):<div style={{fontSize:12,color:"var(--color-text-secondary)",lineHeight:1.5}}>{d.notes||"—"}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Team Tab ──────────────────────────────────────────────────────────────────
+const ALL_ROLES = ["Natasha","Academic Coordinator","Wellbeing Coordinator","Preschool Coordinator","Sports Coordinator",...DEPARTMENTS,"Other"];
+
+function TeamTab({ev,onUpdate,canEdit}){
+  const team = ev.team;
+  const [newMember, setNewMember] = useState({ role:"", customName:"" });
+
+  function setMain(field, val){
+    onUpdate({...ev, team:{...team, mainResponsible: field==="role"?val:team.mainResponsible, mainResponsibleCustom: field==="custom"?val:(val==="Other"?team.mainResponsibleCustom:"") }});
+  }
+  function addMember(){
+    const name = newMember.role==="Other" ? newMember.customName.trim() : newMember.role;
+    if (!name) return;
+    if (team.members?.find(m=>m.name===name)) return;
+    onUpdate({...ev, team:{...team, members:[...(team.members||[]), { name, role: newMember.role==="Other"?"Custom":newMember.role }]}});
+    setNewMember({ role:"", customName:"" });
+  }
+  function removeMember(name){ onUpdate({...ev, team:{...team, members:(team.members||[]).filter(m=>m.name!==name)}}); }
+
+  const mainDisplay = team.mainResponsible==="Other" ? (team.mainResponsibleCustom||"Other") : team.mainResponsible;
+
+  return (
+    <div style={{maxWidth:560}}>
+      {/* Main responsible */}
+      <div style={{marginBottom:"1.25rem",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"12px 14px",background:"var(--color-background-secondary)"}}>
+        <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",marginBottom:8}}>Main Responsible</div>
+        {canEdit ? (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Role / Department</div>
+              <select value={team.mainResponsible||""} onChange={e=>setMain("role",e.target.value)} style={{fontSize:12,padding:"5px 7px",width:"100%"}}>
+                <option value="">— select —</option>
+                {ALL_ROLES.map(r=><option key={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Name (optional / if Other)</div>
+              <input value={team.mainResponsibleCustom||""} onChange={e=>setMain("custom",e.target.value)} placeholder="e.g. Ms. García" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+            </div>
+          </div>
+        ) : (
+          <div style={{fontSize:13,fontWeight:500,color:"var(--color-text-primary)"}}>
+            {team.mainResponsibleCustom ? `${mainDisplay} — ${team.mainResponsibleCustom}` : mainDisplay || "—"}
+          </div>
+        )}
+      </div>
+
+      {/* Team members */}
+      <div>
+        <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",marginBottom:8}}>Team members involved</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+          {(team.members||[]).length===0 && <div style={{fontSize:12,color:"var(--color-text-tertiary)"}}>No team members added yet.</div>}
+          {(team.members||[]).map(m=>(
+            <div key={m.name} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",background:"var(--color-background-secondary)"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <span style={{fontSize:13,color:"var(--color-text-primary)",fontWeight:500}}>{m.name}</span>
+                {m.role&&m.role!=="Custom"&&<span style={{fontSize:11,color:"var(--color-text-tertiary)",marginLeft:8}}>{m.role}</span>}
+              </div>
+              {canEdit&&<button onClick={()=>removeMember(m.name)} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>×</button>}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div style={{border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"10px 12px",background:"var(--color-background-secondary)"}}>
+            <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:6}}>Add team member</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
+              <div>
+                <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Role / Department</div>
+                <select value={newMember.role} onChange={e=>setNewMember(f=>({...f,role:e.target.value,customName:""}))} style={{fontSize:12,padding:"5px 7px",width:"100%"}}>
+                  <option value="">— select —</option>
+                  {ALL_ROLES.map(r=><option key={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>{newMember.role==="Other"?"Name *":"Name (optional)"}</div>
+                <input value={newMember.customName} onChange={e=>setNewMember(f=>({...f,customName:e.target.value}))} placeholder="e.g. Ms. García" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+              </div>
+              <button onClick={addMember} style={{fontSize:12,padding:"5px 12px",cursor:"pointer",background:"var(--color-background-info)",color:"var(--color-text-info)",border:"0.5px solid var(--color-border-info)",borderRadius:"var(--border-radius-md)",whiteSpace:"nowrap"}}>+ Add</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Logistics Tab ─────────────────────────────────────────────────────────────
+function LogisticsTab({ev,onUpdate,canEdit}){
+  const [newSpace,setNewSpace]=useState("");
+  const [newMaint,setNewMaint]=useState("");
+  const lg=ev.logistics;
+  function updLg(key,val){onUpdate({...ev,logistics:{...lg,[key]:val}});}
+  function setSpaceField(id,field,val){updLg("spaces",lg.spaces.map(s=>s.id===id?{...s,[field]:val}:s));}
+  function addSpace(){if(!newSpace.trim())return;updLg("spaces",[...lg.spaces,{id:Date.now(),name:newSpace.trim(),description:"",assignee:emptyAssignee()}]);setNewSpace("");}
+  function removeSpace(id){updLg("spaces",lg.spaces.filter(s=>s.id!==id));}
+  function toggleMaint(id){updLg("maintenance",lg.maintenance.map(m=>m.id===id?{...m,done:!m.done}:m));}
+  function setMaintAssignee(id,val){updLg("maintenance",lg.maintenance.map(m=>m.id===id?{...m,assignee:val}:m));}
+  function addMaint(){if(!newMaint.trim())return;updLg("maintenance",[...lg.maintenance,{id:Date.now(),name:newMaint.trim(),fixed:false,done:false,assignee:emptyAssignee()}]);setNewMaint("");}
+  function removeMaint(id){updLg("maintenance",lg.maintenance.filter(m=>m.id!==id));}
+  function setQuick(key,field,val){updLg(key,{...lg[key],[field]:val});}
+  const maintDone=lg.maintenance.filter(m=>m.done).length;
+
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1.5rem"}}>
+      {/* Spaces */}
+      <div>
+        <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Venue & Spaces</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {lg.spaces.map(s=>(
+            <div key={s.id} style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"8px 10px",background:"var(--color-background-secondary)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:12,fontWeight:500,color:"var(--color-text-primary)"}}>{s.name}</span>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <AssigneeWidget value={s.assignee} onChange={val=>setSpaceField(s.id,"assignee",val)} canEdit={canEdit}/>
+                  {canEdit&&!DEFAULT_SPACES.includes(s.name)&&<button onClick={()=>removeSpace(s.id)} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>×</button>}
+                </div>
+              </div>
+              {canEdit?(
+                <textarea value={s.description} onChange={e=>setSpaceField(s.id,"description",e.target.value)} rows={2} placeholder={`Describe ${s.name} setup…`} style={{fontSize:12,width:"100%",resize:"vertical",padding:"4px 6px",boxSizing:"border-box"}}/>
+              ):<div style={{fontSize:12,color:s.description?"var(--color-text-secondary)":"var(--color-text-tertiary)",lineHeight:1.5}}>{s.description||"No description yet."}</div>}
+            </div>
+          ))}
+        </div>
+        {canEdit&&(
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <input value={newSpace} onChange={e=>setNewSpace(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addSpace()} placeholder="Add space…" style={{flex:1,fontSize:12,padding:"5px 7px"}}/>
+            <button onClick={addSpace} style={{fontSize:12,padding:"5px 9px",cursor:"pointer"}}>+</button>
+          </div>
+        )}
+      </div>
+
+      <div>
+        {/* Maintenance */}
+        <div style={{marginBottom:"1.25rem"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Maintenance</div>
+            <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{maintDone}/{lg.maintenance.length}</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto"}}>
+            {lg.maintenance.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                <input type="checkbox" checked={m.done} disabled={!canEdit} onChange={()=>toggleMaint(m.id)} style={{flexShrink:0}}/>
+                <span style={{flex:1,fontSize:12,color:m.done?"var(--color-text-tertiary)":"var(--color-text-primary)",textDecoration:m.done?"line-through":"none"}}>{m.name}</span>
+                <AssigneeWidget value={m.assignee} onChange={val=>setMaintAssignee(m.id,val)} canEdit={canEdit}/>
+                {canEdit&&!m.fixed&&<button onClick={()=>removeMaint(m.id)} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer",padding:0}}>×</button>}
+              </div>
+            ))}
+          </div>
+          {canEdit&&(
+            <div style={{display:"flex",gap:6,marginTop:8}}>
+              <input value={newMaint} onChange={e=>setNewMaint(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMaint()} placeholder="Add item…" style={{flex:1,fontSize:12,padding:"5px 7px"}}/>
+              <button onClick={addMaint} style={{fontSize:12,padding:"5px 9px",cursor:"pointer"}}>+</button>
+            </div>
+          )}
+        </div>
+
+        {/* Coordinate with */}
+        <div style={{marginBottom:"1.25rem"}}>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Coordinate with</div>
+          {[["cafeteria","Cafeteria"],["parking","Parking"],["externalSports","External Sports"]].map(([key,label])=>(
+            <div key={key} style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"8px 10px",marginBottom:6,background:lg[key].needed?"var(--color-background-info)":"var(--color-background-secondary)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:lg[key].needed?6:0}}>
+                <input type="checkbox" checked={lg[key].needed} disabled={!canEdit} onChange={e=>setQuick(key,"needed",e.target.checked)}/>
+                <span style={{fontSize:12,fontWeight:500,color:lg[key].needed?"var(--color-text-info)":"var(--color-text-secondary)"}}>{label}</span>
+                {lg[key].needed&&<div style={{marginLeft:"auto"}}><AssigneeWidget value={lg[key].assignee} onChange={val=>setQuick(key,"assignee",val)} canEdit={canEdit}/></div>}
+              </div>
+              {lg[key].needed&&(canEdit?(
+                <input value={lg[key].notes} onChange={e=>setQuick(key,"notes",e.target.value)} placeholder="Notes…" style={{fontSize:12,width:"100%",padding:"4px 6px",boxSizing:"border-box"}}/>
+              ):<div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{lg[key].notes||"—"}</div>)}
+            </div>
+          ))}
+        </div>
+
+        {/* Comments */}
+        <div>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-primary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Comments & Observations</div>
+          {canEdit?(
+            <textarea value={lg.comments} onChange={e=>updLg("comments",e.target.value)} rows={4} placeholder="General logistics notes, observations, pending decisions…" style={{fontSize:12,width:"100%",resize:"vertical",padding:"6px 8px",boxSizing:"border-box"}}/>
+          ):<div style={{fontSize:12,color:lg.comments?"var(--color-text-secondary)":"var(--color-text-tertiary)",lineHeight:1.5}}>{lg.comments||"No comments yet."}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Materials Tab ─────────────────────────────────────────────────────────────
+function MaterialsTab({ev,onUpdate,canEdit,currentUser}){
+  const [form,setForm]=useState({item:"",qty:"",unit:"",responsible:"",customName:"",dueDate:"",status:"To Do",notes:""});
+  function addMat(){
+    if(!form.item.trim())return;
+    onUpdate({...ev,materials:[...ev.materials,{id:Date.now(),...form,addedBy:currentUser,addedDate:new Date().toISOString().slice(0,10)}]});
+    setForm({item:"",qty:"",unit:"",responsible:"",customName:"",dueDate:"",status:"To Do",notes:""});
+  }
+  function updateMat(id,key,val){onUpdate({...ev,materials:ev.materials.map(m=>m.id===id?{...m,[key]:val}:m)});}
+  function updateMatAssignee(id,val){onUpdate({...ev,materials:ev.materials.map(m=>m.id===id?{...m,...val}:m)});}
+  function removeMat(id){onUpdate({...ev,materials:ev.materials.filter(m=>m.id!==id)});}
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:"1rem"}}>
+        {MAT_STATUSES.map(s=>{const mc=MAT_COLORS[s];const count=ev.materials.filter(m=>m.status===s).length;return(
+          <div key={s} style={{padding:"10px 12px",background:mc.bg,border:`0.5px solid ${mc.border}`,borderRadius:"var(--border-radius-md)",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:500,color:mc.text}}>{count}</div>
+            <div style={{fontSize:11,color:mc.text}}>{s}</div>
+          </div>
+        );})}
+      </div>
+
+      {canEdit&&(
+        <div style={{border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"0.75rem",marginBottom:"1rem",background:"var(--color-background-secondary)"}}>
+          <div style={{fontSize:12,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:8}}>Add requisition</div>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8,marginBottom:8}}>
+            <input value={form.item} onChange={e=>setForm(f=>({...f,item:e.target.value}))} placeholder="Item / material *" style={{fontSize:12,padding:"5px 7px"}}/>
+            <input value={form.qty} onChange={e=>setForm(f=>({...f,qty:e.target.value}))} placeholder="Qty" style={{fontSize:12,padding:"5px 7px"}}/>
+            <input value={form.unit} onChange={e=>setForm(f=>({...f,unit:e.target.value}))} placeholder="Unit (pcs, sets…)" style={{fontSize:12,padding:"5px 7px"}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8,marginBottom:8}}>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Responsible dept.</div>
+              <select value={form.responsible} onChange={e=>setForm(f=>({...f,responsible:e.target.value,customName:""}))} style={{fontSize:12,padding:"5px 7px",width:"100%"}}>
+                <option value="">— select —</option>
+                {DEPARTMENTS.map(d=><option key={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>or custom name</div>
+              <input value={form.customName} onChange={e=>setForm(f=>({...f,customName:e.target.value,responsible:""}))} placeholder="Type name…" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Due date</div>
+              <input type="date" value={form.dueDate} onChange={e=>setForm(f=>({...f,dueDate:e.target.value}))} style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:8,marginBottom:8}}>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Status</div>
+              <div style={{display:"flex",gap:4}}>
+                {MAT_STATUSES.map(s=>{const c=MAT_COLORS[s];return(<button key={s} onClick={()=>setForm(f=>({...f,status:s}))} style={{fontSize:11,padding:"3px 8px",borderRadius:99,border:`0.5px solid ${c.border}`,background:form.status===s?c.bg:"transparent",color:c.text,cursor:"pointer"}}>{s}</button>);})}
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Notes</div>
+              <input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Optional" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+            </div>
+          </div>
+          <button onClick={addMat} style={{fontSize:12,padding:"6px 14px",cursor:"pointer",background:"var(--color-background-info)",color:"var(--color-text-info)",border:"0.5px solid var(--color-border-info)",borderRadius:"var(--border-radius-md)"}}>Add item</button>
+        </div>
+      )}
+
+      {ev.materials.length===0?(
+        <div style={{fontSize:12,color:"var(--color-text-tertiary)",textAlign:"center",padding:"1.5rem"}}>No materials added yet.</div>
+      ):(
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead>
+            <tr style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+              {["Item","Qty","Responsible","Due","Status","Notes",""].map((h,i)=>(
+                <th key={i} style={{padding:"6px 8px",textAlign:"left",fontWeight:500,color:"var(--color-text-tertiary)",fontSize:11,whiteSpace:"nowrap"}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ev.materials.map(m=>{
+              const mc=MAT_COLORS[m.status];
+              const resp=m.customName||m.responsible;
+              const dl=daysLeft(m.dueDate);
+              return(
+                <tr key={m.id} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                  <td style={{padding:"7px 8px",fontWeight:500,color:"var(--color-text-primary)"}}>{m.item}</td>
+                  <td style={{padding:"7px 8px",color:"var(--color-text-secondary)",whiteSpace:"nowrap"}}>{m.qty}{m.unit?" "+m.unit:""}</td>
+                  <td style={{padding:"7px 8px"}}>
+                    {resp?<span style={{fontSize:11,padding:"1px 7px",borderRadius:99,background:"var(--color-background-secondary)",color:"var(--color-text-secondary)",border:"0.5px solid var(--color-border-tertiary)"}}>{resp}</span>:<span style={{color:"var(--color-text-tertiary)"}}>—</span>}
+                  </td>
+                  <td style={{padding:"7px 8px",whiteSpace:"nowrap"}}>
+                    {m.dueDate?<span style={{fontSize:11,color:dl!==null&&dl<=7&&m.status!=="Done"?"#854F0B":"var(--color-text-secondary)"}}>{fmt(m.dueDate)}</span>:<span style={{color:"var(--color-text-tertiary)"}}>—</span>}
+                  </td>
+                  <td style={{padding:"7px 8px"}}>
+                    {canEdit?(
+                      <select value={m.status} onChange={e=>updateMat(m.id,"status",e.target.value)} style={{fontSize:11,padding:"2px 5px",borderRadius:99,background:mc.bg,color:mc.text,border:`0.5px solid ${mc.border}`,cursor:"pointer"}}>
+                        {MAT_STATUSES.map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    ):<span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:mc.bg,color:mc.text,border:`0.5px solid ${mc.border}`}}>{m.status}</span>}
+                  </td>
+                  <td style={{padding:"7px 8px",color:"var(--color-text-secondary)"}}>{m.notes||"—"}</td>
+                  <td style={{padding:"7px 8px"}}>{canEdit&&<button onClick={()=>removeMat(m.id)} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>×</button>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Debrief Tab ───────────────────────────────────────────────────────────────
+function DebriefTab({ev, onUpdate, currentUser}){
+  const db = ev.debrief || { locked:false, completedDate:"", attendance:"", rating:0, entries:FEEDBACK_PROMPTS.map((p,i)=>({id:i+1,prompt:p,response:""})), additionalNotes:"", author:"", authorDate:"" };
+  const isResponsible = currentUser === ev.team.mainResponsible || currentUser === "Natasha";
+  const canWrite = isResponsible && !db.locked;
+  const eventPast = daysLeft(ev.date) !== null && daysLeft(ev.date) < 0;
+
+  function updDb(key, val){ onUpdate({...ev, debrief:{...db,[key]:val}}); }
+  function setEntry(id, val){ updDb("entries", db.entries.map(e=>e.id===id?{...e,response:val}:e)); }
+  function lock(){
+    if(!window.confirm("Lock this debrief? It will become read-only.")) return;
+    onUpdate({...ev, debrief:{...db, locked:true, author:currentUser, authorDate:new Date().toISOString().slice(0,10)}});
+  }
+
+  const filled = db.entries.filter(e=>e.response.trim()).length;
+  const pctFilled = Math.round(filled/db.entries.length*100);
+
+  if (!eventPast && ev.status !== "Completed") {
+    return (
+      <div style={{textAlign:"center",padding:"2rem",color:"var(--color-text-tertiary)"}}>
+        <div style={{fontSize:28,marginBottom:8}}>📋</div>
+        <div style={{fontSize:13,color:"var(--color-text-secondary)",marginBottom:4}}>Post-event debrief</div>
+        <div style={{fontSize:12}}>This section will be available once the event has taken place or is marked as Completed.</div>
+      </div>
+    );
+  }
+
+  if (!isResponsible && !db.locked) {
+    return (
+      <div style={{textAlign:"center",padding:"2rem",color:"var(--color-text-tertiary)"}}>
+        <div style={{fontSize:28,marginBottom:8}}>🔒</div>
+        <div style={{fontSize:12}}>Only <strong>{ev.team.mainResponsible}</strong> can write the debrief for this event.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{maxWidth:680}}>
+      {/* Header strip */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",padding:"10px 14px",background:db.locked?"var(--color-background-secondary)":"#EAF3DE",border:`0.5px solid ${db.locked?"var(--color-border-tertiary)":"#639922"}`,borderRadius:"var(--border-radius-lg)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:13,fontWeight:500,color:db.locked?"var(--color-text-secondary)":"#3B6D11"}}>
+            {db.locked ? `✓ Debrief completed · ${db.author} · ${fmtFull(db.authorDate)}` : "✏️ Debrief in progress"}
+          </span>
+          {!db.locked && <span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{filled}/{db.entries.length} sections filled</span>}
+        </div>
+        {canWrite && (
+          <button onClick={lock} style={{fontSize:11,padding:"4px 12px",cursor:"pointer",background:"#3B6D11",color:"#fff",border:"none",borderRadius:"var(--border-radius-md)"}}>
+            Lock & finalize
+          </button>
+        )}
+      </div>
+
+      {/* Meta fields */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:"1.25rem"}}>
+        <div>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Event date completed</div>
+          {canWrite ? <input type="date" value={db.completedDate} onChange={e=>updDb("completedDate",e.target.value)} style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/> : <div style={{fontSize:12}}>{fmtFull(db.completedDate)||"—"}</div>}
+        </div>
+        <div>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Attendance (approx.)</div>
+          {canWrite ? <input value={db.attendance} onChange={e=>updDb("attendance",e.target.value)} placeholder="e.g. 120 families" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/> : <div style={{fontSize:12}}>{db.attendance||"—"}</div>}
+        </div>
+        <div>
+          <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Overall rating</div>
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+            {[1,2,3,4,5].map(n=>(
+              <button key={n} onClick={()=>canWrite&&updDb("rating",n)} style={{fontSize:18,background:"none",border:"none",cursor:canWrite?"pointer":"default",opacity:n<=db.rating?1:0.25,padding:"0 1px"}}>★</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {!db.locked && (
+        <div style={{marginBottom:"1.25rem"}}>
+          <div style={{height:4,background:"var(--color-border-tertiary)",borderRadius:2,overflow:"hidden"}}>
+            <div style={{width:`${pctFilled}%`,height:"100%",background:"#639922",borderRadius:2,transition:"width 0.3s"}}/>
+          </div>
+        </div>
+      )}
+
+      {/* Prompt entries */}
+      <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:"1.25rem"}}>
+        {db.entries.map((e,i)=>(
+          <div key={e.id} style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"10px 12px",background:e.response.trim()?"var(--color-background-primary)":"var(--color-background-secondary)"}}>
+            <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:5}}>{i+1}. {e.prompt}</div>
+            {canWrite ? (
+              <textarea value={e.response} onChange={ev=>setEntry(e.id,ev.target.value)} rows={3} placeholder="Write here…" style={{fontSize:13,width:"100%",resize:"vertical",padding:"6px 8px",boxSizing:"border-box",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-md)"}}/>
+            ) : (
+              <div style={{fontSize:13,color:e.response?"var(--color-text-primary)":"var(--color-text-tertiary)",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{e.response||"—"}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Additional notes */}
+      <div style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"10px 12px",background:"var(--color-background-secondary)"}}>
+        <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:5}}>Additional notes / attachments</div>
+        {canWrite ? (
+          <textarea value={db.additionalNotes} onChange={e=>updDb("additionalNotes",e.target.value)} rows={4} placeholder="Any additional observations, links to photos, external documents, follow-up actions…" style={{fontSize:13,width:"100%",resize:"vertical",padding:"6px 8px",boxSizing:"border-box"}}/>
+        ) : (
+          <div style={{fontSize:13,color:db.additionalNotes?"var(--color-text-primary)":"var(--color-text-tertiary)",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{db.additionalNotes||"—"}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+function MilestonesTab({ev,onUpdate,canEdit}){
+  const [form,setForm]=useState({type:MILESTONE_TYPES[0],date:"",responsible:"",customName:"",notes:""});
+  function addMs(){if(!form.date)return;onUpdate({...ev,milestones:[...ev.milestones,{id:Date.now(),...form}]});setForm({type:MILESTONE_TYPES[0],date:"",responsible:"",customName:"",notes:""});}
+  function removeMs(id){onUpdate({...ev,milestones:ev.milestones.filter(m=>m.id!==id)});}
+  const sorted=[...ev.milestones].sort((a,b)=>a.date.localeCompare(b.date));
+  return (
+    <div>
+      {canEdit&&(
+        <div style={{border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"0.75rem",marginBottom:"1rem",background:"var(--color-background-secondary)"}}>
+          <div style={{fontSize:12,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:8}}>Add milestone</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+            <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} style={{fontSize:12,padding:"5px 7px"}}>
+              {MILESTONE_TYPES.map(t=><option key={t}>{t}</option>)}
+            </select>
+            <input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={{fontSize:12,padding:"5px 7px"}}/>
+            <input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes (optional)" style={{fontSize:12,padding:"5px 7px"}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>Responsible dept.</div>
+              <select value={form.responsible} onChange={e=>setForm(f=>({...f,responsible:e.target.value,customName:""}))} style={{fontSize:12,padding:"5px 7px",width:"100%"}}>
+                <option value="">— select —</option>
+                {DEPARTMENTS.map(d=><option key={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:3}}>or custom name</div>
+              <input value={form.customName} onChange={e=>setForm(f=>({...f,customName:e.target.value,responsible:""}))} placeholder="Type name…" style={{fontSize:12,padding:"5px 7px",width:"100%",boxSizing:"border-box"}}/>
+            </div>
+          </div>
+          <button onClick={addMs} style={{fontSize:12,padding:"6px 14px",cursor:"pointer",background:"var(--color-background-info)",color:"var(--color-text-info)",border:"0.5px solid var(--color-border-info)",borderRadius:"var(--border-radius-md)"}}>Add milestone</button>
+        </div>
+      )}
+      {sorted.length===0?(
+        <div style={{fontSize:12,color:"var(--color-text-tertiary)",textAlign:"center",padding:"1.5rem"}}>No milestones added yet.</div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          {sorted.map((m,i)=>{
+            const dl=daysLeft(m.date);
+            const past=dl!==null&&dl<0;
+            const resp=m.customName||m.responsible;
+            return(
+              <div key={m.id} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:3}}>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:past?"var(--color-border-tertiary)":ev.color,flexShrink:0}}/>
+                  {i<sorted.length-1&&<div style={{width:1,height:20,background:"var(--color-border-tertiary)",marginTop:3}}/>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:2}}>
+                    <span style={{fontSize:12,fontWeight:500,color:past?"var(--color-text-tertiary)":"var(--color-text-primary)"}}>{m.type}</span>
+                    <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{fmtFull(m.date)}</span>
+                    {!past&&dl!==null&&<span style={{fontSize:11,padding:"1px 6px",borderRadius:99,background:dl<=7?"#FAEEDA":"var(--color-background-secondary)",color:dl<=7?"#854F0B":"var(--color-text-secondary)"}}>{dl===0?"Today":`${dl}d`}</span>}
+                    {past&&<span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>Past</span>}
+                    {resp&&<span style={{fontSize:11,padding:"1px 7px",borderRadius:99,background:"var(--color-background-secondary)",color:"var(--color-text-secondary)",border:"0.5px solid var(--color-border-tertiary)"}}>{resp}</span>}
+                  </div>
+                  {m.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{m.notes}</div>}
+                </div>
+                {canEdit&&<button onClick={()=>removeMs(m.id)} style={{fontSize:11,color:"var(--color-text-tertiary)",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>×</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
